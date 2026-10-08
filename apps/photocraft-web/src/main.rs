@@ -16,6 +16,15 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod agent_policy;
+
+#[cfg(any(target_arch = "wasm32", test))]
+mod agent_files;
+
+#[cfg(target_arch = "wasm32")]
+mod agent_api;
+
 #[cfg(target_arch = "wasm32")]
 mod web;
 

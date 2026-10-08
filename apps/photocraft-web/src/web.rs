@@ -48,6 +48,9 @@ pub fn start() {
                     PhotocraftApp::setup_context(&cc.egui_ctx, ThemeKind::Pro);
                     let inbox: Inbox = Arc::default();
                     let mut app = PhotocraftApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
+                    if let Err(error) = crate::agent_api::install(cc.egui_ctx.clone()) {
+                        log::error!("PhotoCraft agent API failed to install: {error:?}");
+                    }
                     listen_pen(&pen_target, app.stylus.feed.clone());
                     app.set_theme(&cc.egui_ctx, ThemeKind::Pro);
                     if let Some(rs) = cc.wgpu_render_state.clone()
@@ -128,6 +131,7 @@ impl eframe::App for WebShell {
             });
         }
         self.app.logic(ctx, frame);
+        crate::agent_api::drain(&mut self.app, ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -138,6 +142,8 @@ impl eframe::App for WebShell {
 fn services(inbox: Inbox, ctx: egui::Context) -> Services {
     let open_inbox = inbox.clone();
     Services {
+        automation_command: Some(Box::new(crate::agent_policy::authorize)),
+        automation_authorize: Some(crate::agent_policy::authorize_step),
         import: Some(Box::new(|name: &str, bytes: &[u8]| photocraft_io::import(name, bytes).map(|r| (r.document, r.warnings)).map_err(|e| e.to_string()))),
         export: Some(Box::new(|doc: &Document, path: &str, settings: &photocraft_ui_egui::ExportSettings| {
             let mut opts = photocraft_io::ExportOptions::default();
