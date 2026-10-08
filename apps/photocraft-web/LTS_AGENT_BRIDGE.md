@@ -5,6 +5,8 @@ editor. It uses the upstream `PhotocraftApp` control dispatcher and its active
 session, through one ordered queue drained after frame logic. The native CLI MCP
 process has a separate session. A queued request expires after 30 seconds before
 execution; synchronous codec work cannot be interrupted once it starts.
+An unexpected WASM trap can leave a running Promise unresolved; queue expiry is
+not execution cancellation, and recovery from a trapped runtime is unqualified.
 
 The API is intended for a local, isolated experiment with generated fixtures.
 It does not provide tenant authorization, an OS resource sandbox, durable
@@ -16,16 +18,21 @@ The embedding host is responsible for its origin checks and request sequencing.
 - `info()` returns bridge metadata and the command allowlist.
 - `inspect()` resolves to the upstream UI inspection, including session state.
 - `execute(command, params)` runs only commands in `agent_policy.rs` through the
-  existing UI control dispatcher. Active manual text, pen, transform, dialogs,
-  context menus, and pointer gestures reject editing requests as busy. Paths,
+  existing UI control dispatcher. Active manual text, pen, transform, crop/lasso,
+  modal filters, unsaved-work prompts, context menus, and pointer press/release
+  frames reject editing requests as busy. Explicit text font families must be
+  loaded in this page first. Pixel fills require the composite channel view,
+  without Quick Mask or a mask view. Paths,
   plugins, preferences, and scripts are not exposed.
 - `importBytes(name, bytes)` opens a named PNG, JPEG, WebP, or PhotoCraft project
   from a `Uint8Array`, using a single-use in-memory transfer. No host path or URL
   is accepted. Signatures must match the permitted extension; PNG dimensions are
   limited to 2048 per side. The transfer cap is 16 MiB. Import does not create a
   saved path or an Open Recent entry.
-- `exportBytes(format)` resolves to `{format, warnings, bytes}` for `png` or
-  `pcraft`. Encoding borrows the document immutably, so receiving bytes does not
+- `exportBytes(format, documentIndex?)` resolves to
+  `{format, documentIndex, warnings, bytes}` for `png` or `pcraft`. An optional
+  zero-based index (0–7) reads an inactive document without switching tabs.
+  Encoding borrows the document immutably, so receiving bytes does not
   mark the document saved or change its path. Export is limited to 2048 pixels
   per side, 64 layers, and 16 MiB of encoded output.
 - `importFontBytes(bytes)` explicitly registers an in-memory font before text

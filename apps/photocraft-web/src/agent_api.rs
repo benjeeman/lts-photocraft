@@ -9,7 +9,7 @@ enum Operation {
     Inspect,
     Execute(String, Value),
     Import(String, Vec<u8>),
-    Export(String),
+    Export(String, Option<usize>),
     Font(Vec<u8>),
 }
 struct Pending {
@@ -89,25 +89,15 @@ fn enqueue(operation: Operation, ctx: &egui::Context) -> js_sys::Promise {
     ctx.request_repaint();
     promise
 }
-fn busy(app: &PhotocraftApp, ctx: &egui::Context) -> bool {
-    app.ui.text_edit.is_some()
-        || app.ui.transform.is_some()
-        || app.ui.pen.is_some()
-        || !app.ui.dialogs.is_empty()
-        || app.ui.layer_menu.is_some()
-        || app.ui.canvas_tool_menu.is_some()
-        || app.ui.brush_picker.is_some()
-        || app.ui.palette_open
-        || ctx.input(|i| i.pointer.any_down())
-}
 fn perform(operation: Operation, app: &mut PhotocraftApp, ctx: &egui::Context) -> Result<JsValue, JsValue> {
-    if !matches!(&operation, Operation::Inspect) && busy(app, ctx) {
+    if !matches!(&operation, Operation::Inspect) && crate::agent_context::busy(app, ctx) {
         return Err(error("editor busy with a manual edit or dialog; request not applied"));
     }
     match operation {
         Operation::Inspect => to_js(&control::inspect(app, ctx)),
         Operation::Execute(command, params) => {
             crate::agent_policy::authorize(&command, &params).map_err(error)?;
+            crate::agent_context::validate(&command, &params, &app.session).map_err(error)?;
             if command == "file.new" && app.session.documents().len() >= 8 {
                 return Err(error("lab document limit reached"));
             }
@@ -128,9 +118,9 @@ fn perform(operation: Operation, app: &mut PhotocraftApp, ctx: &egui::Context) -
             let warnings = app.open_automation_bytes(&name, &bytes).map_err(error)?;
             to_js(&json!({"warnings": warnings, "path": null}))
         }
-        Operation::Export(format) => {
-            let output = crate::agent_files::export_bytes(&app.session, &format).map_err(error)?;
-            let result = to_js(&json!({"format": format, "warnings": output.warnings}))?;
+        Operation::Export(format, document_index) => {
+            let output = crate::agent_files::export_bytes(&app.session, &format, document_index).map_err(error)?;
+            let result = to_js(&json!({"format": format, "documentIndex": document_index.or(app.session.active_index()), "warnings": output.warnings}))?;
             js_sys::Reflect::set(&result, &"bytes".into(), &js_sys::Uint8Array::from(output.bytes.as_slice()))?;
             Ok(result)
         }
@@ -210,11 +200,18 @@ pub fn install(ctx: egui::Context) -> Result<(), JsValue> {
     set(
         &object,
         "exportBytes",
-        Closure::<dyn Fn(String) -> js_sys::Promise>::new(move |format: String| {
+        Closure::<dyn Fn(String, JsValue) -> js_sys::Promise>::new(move |format: String, index: JsValue| {
             if !matches!(format.as_str(), "png" | "pcraft") {
                 return reject("export format must be png or pcraft");
             }
-            enqueue(Operation::Export(format), &export_ctx)
+            let document_index = if index.is_undefined() {
+                None
+            } else if let Some(value) = index.as_f64().filter(|n| n.is_finite() && n.fract() == 0.0 && (0.0..=7.0).contains(n)) {
+                Some(value as usize)
+            } else {
+                return reject("document index must be an integer from 0 to 7");
+            };
+            enqueue(Operation::Export(format, document_index), &export_ctx)
         })
         .into_js_value(),
     )?;
@@ -229,7 +226,7 @@ pub fn install(ctx: egui::Context) -> Result<(), JsValue> {
         })
         .into_js_value(),
     )?;
-    set(&object, "info", Closure::<dyn Fn() -> JsValue>::new(|| to_js(&json!({"apiVersion":"lts-lab-1", "upstreamVersion":"0.5.0", "session":"visible-browser-editor", "nativeSessionShared":false, "commands":crate::agent_policy::COMMANDS, "queue":"ordered-frame-queue", "queuedExpiryMs":TIMEOUT_MS, "explicitFontImport":true, "fontsAffectFutureLayouts":true, "scope":"isolated-generated-fixture-lab"})).unwrap_or(JsValue::NULL)).into_js_value())?;
+    set(&object, "info", Closure::<dyn Fn() -> JsValue>::new(|| to_js(&json!({"apiVersion":"lts-lab-1", "upstreamVersion":"0.5.0", "session":"visible-browser-editor", "nativeSessionShared":false, "commands":crate::agent_policy::COMMANDS, "queue":"ordered-frame-queue", "queuedExpiryMs":TIMEOUT_MS, "explicitFontImport":true, "fontImportCount":FONT_IMPORTS.get(), "fontsAffectFutureLayouts":true, "explicitFontRequiredLoaded":true, "documentIndexExport":true, "scope":"isolated-generated-fixture-lab"})).unwrap_or(JsValue::NULL)).into_js_value())?;
     let window = web_sys::window().ok_or_else(|| error("no browser window"))?;
     js_sys::Reflect::set(&window, &"photocraft".into(), &object)?;
     Ok(())

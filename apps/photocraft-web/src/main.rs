@@ -22,6 +22,9 @@ mod agent_policy;
 #[cfg(any(target_arch = "wasm32", test))]
 mod agent_files;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod agent_context;
+
 #[cfg(target_arch = "wasm32")]
 mod agent_api;
 

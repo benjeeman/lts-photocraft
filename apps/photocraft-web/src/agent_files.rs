@@ -35,11 +35,14 @@ pub fn validate_input(name: &str, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Encoding borrows the session immutably: obtaining bytes cannot mark work saved.
-pub fn export_bytes(session: &photocraft_engine::Session, format: &str) -> Result<photocraft_io::ExportResult, String> {
+pub fn export_bytes(session: &photocraft_engine::Session, format: &str, document_index: Option<usize>) -> Result<photocraft_io::ExportResult, String> {
     if !matches!(format, "png" | "pcraft") {
         return Err("export format must be png or pcraft".into());
     }
-    let state = session.active().ok_or("no document")?;
+    let state = match document_index {
+        Some(index) => session.documents().get(index).ok_or("no document at that index")?,
+        None => session.active().ok_or("no document")?,
+    };
     if state.doc.size.width > 2048 || state.doc.size.height > 2048 || state.doc.layer_count() > 64 {
         return Err("Creative Lab byte export is limited to 2048 pixels per side and 64 layers".into());
     }
@@ -96,13 +99,33 @@ mod tests {
         state.saved_revision = 0;
         let before_revision = state.revision;
         for format in ["png", "pcraft"] {
-            assert!(!export_bytes(&session, format).expect("encode fixture").bytes.is_empty());
+            assert!(!export_bytes(&session, format, None).expect("encode fixture").bytes.is_empty());
             let state = session.active().expect("fixture retained");
             assert_eq!(state.path.as_deref(), Some("original.pcraft"));
             assert_eq!(state.saved_revision, 0);
             assert_eq!(state.revision, before_revision);
         }
-        assert!(export_bytes(&session, "exe").is_err());
+        assert!(export_bytes(&session, "exe", None).is_err());
+    }
+
+    #[test]
+    fn inactive_document_export_does_not_switch_or_save_either_document() {
+        let mut session = photocraft_engine::Session::new();
+        for (name, side) in [("first", 8), ("second", 16)] {
+            session.execute("file.new", serde_json::json!({"width":side,"height":side,"name":name})).expect("new fixture");
+            session.execute("layer.new.layer", serde_json::json!({"name":"Dirty"})).expect("edit fixture");
+        }
+        let state = |s: &photocraft_engine::Session| {
+            s.documents().iter().map(|d| (d.doc.id, d.revision, d.saved_revision, d.path.clone(), d.is_dirty())).collect::<Vec<_>>()
+        };
+        let before = state(&session);
+        assert_eq!(session.active_index(), Some(1));
+        let first = export_bytes(&session, "png", Some(0)).expect("inactive PNG");
+        assert_eq!(first.bytes.get(16..20), Some(8_u32.to_be_bytes().as_slice()));
+        assert!(!export_bytes(&session, "pcraft", Some(0)).expect("inactive project").bytes.is_empty());
+        assert_eq!(session.active_index(), Some(1));
+        assert_eq!(state(&session), before);
+        assert!(export_bytes(&session, "png", Some(7)).is_err());
     }
 
     #[test]
