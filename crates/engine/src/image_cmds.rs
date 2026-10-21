@@ -2,6 +2,7 @@
 //! bit depth) conversions, Duplicate.
 
 use photocraft_algo::resample::{Resample, crop_surface, resize_surface_in_canvas, translate_surface};
+use photocraft_algo::transform::Interp;
 use photocraft_color::{ColorMode, SampleType};
 use photocraft_doc::{Document, Effect, Effects, FxPaint, Layer, LayerContent, Size};
 use photocraft_geom::Rect;
@@ -97,22 +98,40 @@ pub(crate) fn scale_effects(fx: &mut Effects, k: f32) {
     }
 }
 
-fn parse_resample(s: &str) -> Option<Resample> {
-    Some(match s {
-        "none" => return None,
+/// Image Size's `"resample"` (bicubic when absent); `None` is `"none"` (the resolution changes,
+/// the pixels don't). Photoshop's names are accepted, the Preferences › General › Image
+/// Interpolation ones included; an unknown name is an error that names it, not a silent bicubic.
+fn resample_param(p: &Value, cmd: &str) -> Result<Option<Resample>> {
+    let name = p.get("resample").and_then(Value::as_str).unwrap_or("bicubic");
+    Ok(Some(match name {
+        "none" => return Ok(None),
         "nearest" | "nearestNeighbor" => Resample::Nearest,
         "bilinear" => Resample::Bilinear,
         "lanczos" => Resample::Lanczos,
         "preserveDetails" => Resample::PreserveDetails,
-        _ => Resample::Bicubic,
+        "bicubic" | "bicubicAutomatic" | "bicubicSmoother" | "bicubicSharper" => Resample::Bicubic,
+        _ => return Err(EngineError::BadParams { cmd: cmd.into(), msg: format!("unknown resample `{name}` ({RESAMPLE_NAMES})") }),
+    }))
+}
+
+const RESAMPLE_NAMES: &str = "bicubic|bilinear|nearest|lanczos|preserveDetails|none, or nearestNeighbor|bicubicAutomatic|bicubicSmoother|bicubicSharper";
+
+/// A transform's `"interpolation"` (`default` when absent), checked: Photoshop's names, the
+/// Preferences › General › Image Interpolation ones included. An unknown name is an error that
+/// names it; every command that takes one calls this before doing any work.
+pub(crate) fn interp_param(p: &Value, cmd: &str, default: &str) -> Result<Interp> {
+    let name = p.get("interpolation").and_then(Value::as_str).unwrap_or(default);
+    Interp::try_parse(name).ok_or_else(|| EngineError::BadParams {
+        cmd: cmd.into(),
+        msg: format!("unknown interpolation `{name}` (bicubic|bilinear|nearest, or nearestNeighbor|bicubicAutomatic|bicubicSmoother|bicubicSharper)"),
     })
 }
 
 /// Image → Image Size.
 fn image_size(s: &mut Session, p: &Value) -> Result<Value> {
+    let resample = resample_param(p, "image.imageSize")?;
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let (ow, oh) = (d.doc.size.width, d.doc.size.height);
-    let resample = parse_resample(p.get("resample").and_then(Value::as_str).unwrap_or("bicubic"));
     let pw = p.get("width").and_then(Value::as_f64);
     let ph = p.get("height").and_then(Value::as_f64);
     // Missing dimension keeps the aspect ratio.

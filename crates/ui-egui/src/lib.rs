@@ -457,6 +457,17 @@ pub struct PhotocraftApp {
 }
 
 impl PhotocraftApp {
+    /// A modal or preview session may still commit work from an earlier snapshot.
+    /// Embedders must not interleave document edits with these manual sessions.
+    pub fn has_pending_modal_edit(&self) -> bool {
+        self.distort.active()
+            || self.distort.gallery.is_some()
+            || self.camera_raw.is_some()
+            || self.wide_angle.is_some()
+            || self.discard.is_some()
+            || self.tiff_options.is_some()
+    }
+
     pub fn new(session: Session, services: Services) -> Self {
         let mut app = Self {
             session,

@@ -312,6 +312,7 @@ fn lens_correction(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn adaptive_wide_angle(s: &mut Session, p: &Value) -> Result<Value> {
+    let interp = crate::image_cmds::interp_param(p, WIDE, "bicubic")?;
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let frame = st.doc.bounds();
     let info = camera_info(&st.doc);
@@ -323,7 +324,6 @@ fn adaptive_wide_angle(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(l) = p.get("layer") {
         stored["layer"] = l.clone();
     }
-    let interp = Interp::parse(p.get("interpolation").and_then(Value::as_str).unwrap_or("bicubic"));
     let id = run_filter(s, WIDE, "Adaptive Wide Angle", stored.clone(), true, &|surf, canvas| {
         let tris = mesh.triangles();
         if canvas == frame {

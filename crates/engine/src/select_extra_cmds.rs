@@ -11,7 +11,7 @@
 use photocraft_algo::segment::sky::{self, SkyParams};
 use photocraft_algo::segment::{Sampler, SurfaceSampler};
 use photocraft_algo::selection::{SelectionMode, combine_region};
-use photocraft_algo::transform::{Homography, Interp};
+use photocraft_algo::transform::Homography;
 use photocraft_algo::warp::warp_mesh_gray;
 use photocraft_doc::{Document, LayerId};
 use photocraft_geom::Rect;
@@ -150,6 +150,7 @@ fn affine_params(p: &Value, r: [f64; 4]) -> Homography {
 
 fn transform_selection(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "select.transformSelection";
+    let interp = crate::image_cmds::interp_param(p, CMD, "bilinear")?;
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let sel = d.doc.selection.as_ref().ok_or_else(|| EngineError::Other("no selection".into()))?;
     let b = sel.content_bounds();
@@ -160,7 +161,6 @@ fn transform_selection(s: &mut Session, p: &Value) -> Result<Value> {
         }
         _ => [b.x0 as f64, b.y0 as f64, b.x1 as f64, b.y1 as f64],
     };
-    let interp = Interp::parse(p.get("interpolation").and_then(Value::as_str).unwrap_or("bilinear"));
     let is_warp = ["warp", "style", "mesh", "grid"].iter().any(|k| p.get(*k).is_some());
     if is_warp {
         let r = Rect::new(rect[0].floor() as i32, rect[1].floor() as i32, rect[2].ceil() as i32, rect[3].ceil() as i32);

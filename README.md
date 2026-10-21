@@ -1,13 +1,9 @@
-<p align="center">
-  <a href="https://getartcraft.com/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/brand/artcraft-logo-white.svg">
-      <img alt="ArtCraft" src="docs/brand/artcraft-logo.svg" width="200">
-    </picture>
-  </a>
-</p>
+<h1 align="center">LTS PhotoCraft integration fork</h1>
 
-<h1 align="center">PhotoCraft</h1>
+This modified fork is based on PhotoCraft by the ArtCraft team and community.
+It is maintained for the LTS Creative Lab and is not an official ArtCraft product.
+The fork's browser bridge is documented in
+[LTS_AGENT_BRIDGE.md](apps/photocraft-web/LTS_AGENT_BRIDGE.md).
 
 <p align="center">
   <b>Image editing; an open-source, clean-room reimplementation of Adobe Photoshop, rebuilt in pure Rust.</b><br>
@@ -420,8 +416,7 @@ Forks and modified versions must remove them.
 <sub>Adobe, Photoshop, Illustrator, Premiere Pro, Lightroom, Acrobat, After Effects and InDesign are trademarks or registered trademarks of Adobe Inc. in the United States and/or other countries. PhotoCraft is an independent, open-source project and is not affiliated with, sponsored by or endorsed by Adobe Inc.; these names are used only to describe the workflows it is compatible with.</sub>
 
 <p align="center">
-  <a href="https://getartcraft.com/"><img alt="ArtCraft" src="docs/brand/artcraft-mark.svg" width="28"></a><br>
-  <sub>Made by the <a href="https://getartcraft.com/">ArtCraft</a> team and community.</sub>
+  <sub>Based on PhotoCraft by the ArtCraft team and community.</sub>
 </p>
 
 ## Star history

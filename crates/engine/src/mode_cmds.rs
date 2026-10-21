@@ -55,6 +55,7 @@ pub fn rotated_size(size: Size, deg: f64) -> Size {
 
 fn rotate_arbitrary(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "image.rotation.arbitrary";
+    let interp = crate::image_cmds::interp_param(p, CMD, "bicubic")?;
     let angle = f64::from(num(p, "angle", 0.0));
     if !angle.is_finite() || angle.abs() > 3600.0 {
         return Err(bad(CMD, "angle out of range"));
@@ -77,7 +78,6 @@ fn rotate_arbitrary(s: &mut Session, p: &Value) -> Result<Value> {
         // Clockwise on screen (y down): x' = c·x − s·y, y' = s·x + c·y about the centres.
         let a = Affine { m: [cs, sn, -sn, cs, nx - (cs * cx - sn * cy), ny - (sn * cx + cs * cy)] };
         let h = Homography([a.m[0], a.m[2], a.m[4], a.m[1], a.m[3], a.m[5], 0.0, 0.0, 1.0]);
-        let interp = Interp::parse(str_or(p, "interpolation", "bicubic"));
         doc.size = new;
         let canvas = doc.bounds();
         let fmt = doc.pixel_format();

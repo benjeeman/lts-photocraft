@@ -8,7 +8,7 @@ use photocraft_doc::{Document, Layer, LayerContent};
 use photocraft_geom::{Rect, Size, TILE_SIZE};
 use photocraft_raster::Surface;
 
-use crate::{ExportOptions, ExportResult, ImportResult, IoError, XmpEmbed};
+use crate::{ExportOptions, ExportResult, ImportResult, IoError};
 
 /// Bytes per band when converting or exporting a band of rows at a time.
 const BAND_BYTES: usize = 32 << 20;
@@ -287,10 +287,13 @@ pub fn export_flat(doc: &Document, format: Format, opts: &ExportOptions) -> Resu
     }
     let mut warnings = Vec::new();
     let mut img = document_to_image(doc, &mut warnings)?;
-    if opts.xmp == XmpEmbed::None {
-        // Export As's Metadata: None: the packet lists the text of every type layer and one id
-        // per placed document (#647).
+    if !opts.xmp.keeps_metadata() {
+        // Export As's Metadata: None: no XMP (the packet lists the text of every type layer and
+        // one id per placed document, #647) and no EXIF (camera make, model and serial number,
+        // capture time, GPS position). The pixels are upright, so no orientation is needed.
         img.meta.xmp = None;
+        img.meta.exif = None;
+        img.meta.text.clear();
     }
     if img.layout().has_alpha() && !format.caps().alpha {
         // Flattened over white, as saving a transparent document without transparency does.
