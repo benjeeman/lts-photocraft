@@ -5,10 +5,13 @@ use std::sync::{Arc, Mutex};
 use photocraft_codecs::{ChannelLayout, EncodeOptions, Image};
 use photocraft_doc::Document;
 use photocraft_engine::Session;
+use photocraft_ui_egui::presentation::Presentation;
 use photocraft_ui_egui::theme::ThemeKind;
 use photocraft_ui_egui::{PhotocraftApp, Services};
 use wasm_bindgen::JsCast as _;
 
+mod lts_view;
+mod lts_view_core;
 type Inbox = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
 
 /// Everything File › Open reads: PhotoCraft and Photoshop documents, flat images, and Photoshop
@@ -32,6 +35,12 @@ pub fn start() {
         };
         let q = query();
         let force_cpu = q.contains("cpu");
+        // The LTS host loads the page with the exact key `embedded` (`?…&embedded`): its
+        // presentation is chosen here, before the first frame, and only names the page.
+        let presentation = Presentation::from_query(&q);
+        if !presentation.shows_community() {
+            document.set_title(photocraft_ui_egui::presentation::FULL_NAME);
+        }
         let mut options = eframe::WebOptions::default();
         photocraft_ui_egui::gpu_canvas::use_adapter_limits(&mut options.wgpu_options.wgpu_setup);
         if q.contains("webgl")
@@ -47,10 +56,11 @@ pub fn start() {
                 Box::new(move |cc| {
                     PhotocraftApp::setup_context(&cc.egui_ctx, ThemeKind::Pro);
                     let inbox: Inbox = Arc::default();
-                    let mut app = PhotocraftApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
+                    let mut app = PhotocraftApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone())).with_presentation(presentation);
                     if let Err(error) = crate::agent_api::install(cc.egui_ctx.clone()) {
                         log::error!("PhotoCraft agent API failed to install: {error:?}");
                     }
+                    lts_view::install(cc.egui_ctx.clone());
                     listen_pen(&pen_target, app.stylus.feed.clone());
                     app.set_theme(&cc.egui_ctx, ThemeKind::Pro);
                     if let Some(rs) = cc.wgpu_render_state.clone()
@@ -66,10 +76,23 @@ pub fn start() {
         if let Some(el) = document.get_element_by_id("photocraft_loading") {
             match result {
                 Ok(()) => el.remove(),
-                Err(e) => el.set_inner_html(&format!("<p>PhotoCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
+                Err(e) => start_failed(&document, &el, presentation, &format!("{e:?}")),
             }
         }
     });
+}
+
+/// Replace the loading message with why the app could not start. The error is set as text, never
+/// parsed as markup; no automatic reload.
+fn start_failed(document: &web_sys::Document, loading: &web_sys::Element, presentation: Presentation, error: &str) {
+    let name = if presentation.shows_community() { "PhotoCraft" } else { photocraft_ui_egui::presentation::FULL_NAME };
+    loading.set_text_content(None);
+    for line in [format!("{name} failed to start: {error}"), "A browser with WebGPU or WebGL2 is required.".to_string()] {
+        if let Ok(p) = document.create_element("p") {
+            p.set_text_content(Some(&line));
+            let _ = loading.append_child(&p);
+        }
+    }
 }
 
 /// Pen pressure, tilt, twist and the eraser button from Pointer Events (eframe forwards none of them for pens) into
@@ -132,6 +155,7 @@ impl eframe::App for WebShell {
         }
         self.app.logic(ctx, frame);
         crate::agent_api::drain(&mut self.app, ctx);
+        lts_view::drain(&mut self.app, ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

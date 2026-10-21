@@ -108,6 +108,20 @@ pub enum Interp {
 }
 
 impl Interp {
+    /// The interpolation named `s`: Photoshop's names, the Preferences › General › Image
+    /// Interpolation ones included (`nearestNeighbor`, `bicubicAutomatic`, `bicubicSmoother`,
+    /// `bicubicSharper`); `None` for any other name. Commands use this and refuse an unknown name.
+    pub fn try_parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "nearest" | "nearestNeighbor" => Interp::Nearest,
+            "bilinear" => Interp::Bilinear,
+            "bicubic" | "bicubicAutomatic" | "bicubicSmoother" | "bicubicSharper" => Interp::Bicubic,
+            _ => return None,
+        })
+    }
+
+    /// Lenient [`Self::try_parse`]: any other name is bicubic. For stored parameters a command
+    /// has already checked (smart filters re-rendered from their source).
     pub fn parse(s: &str) -> Self {
         match s {
             "nearest" | "nearestNeighbor" => Interp::Nearest,

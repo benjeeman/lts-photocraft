@@ -22,6 +22,12 @@ use crate::psd_export::{PsdExportOptions, document_to_psd_with};
 use crate::psd_import::psd_to_document;
 use crate::{ExportOptions, ExportResult, ImportResult, IoError};
 
+/// Image resources that describe the photo rather than the document, left out when an export
+/// embeds no metadata ([`crate::XmpEmbed::None`]): caption (1008), IPTC-NAA record (1028),
+/// copyright flag (1034), URL (1035), EXIF data 1 and 3 (1058, 1059), XMP (1060) and the IPTC
+/// caption digest (1061).
+const METADATA_RESOURCES: [u16; 8] = [1008, 1028, 1034, 1035, ids::EXIF, 1059, ids::XMP, 1061];
+
 /// `true` when saving `doc` as TIFF writes layer data: anything beyond a single Background
 /// layer (one plain, transparency-locked raster layer), which a flat TIFF already represents
 /// exactly. A lone unlocked layer keeps its layer data, as in Photoshop, so it reopens as that
@@ -199,7 +205,10 @@ pub(crate) fn export_layered(doc: &Document, opts: &ExportOptions) -> Result<Exp
     warnings.extend(w.into_iter().map(|w| format!("layer data: {w}")));
     // The profile and XMP are written as TIFF tags, not as resources. EXIF stays a resource
     // (1058): the TIFF codec has no EXIF directory, and the PSD importer reads it back from there.
-    let resources: Vec<ImageResource> = file.resources.iter().filter(|r| !matches!(r.id, ids::ICC_PROFILE | ids::XMP)).cloned().collect();
+    // Export As's Metadata: None leaves out every metadata resource (EXIF, IPTC, copyright).
+    let keep = opts.xmp.keeps_metadata();
+    let written = |id: u16| !matches!(id, ids::ICC_PROFILE | ids::XMP) && (keep || !METADATA_RESOURCES.contains(&id));
+    let resources: Vec<ImageResource> = file.resources.iter().filter(|r| written(r.id)).cloned().collect();
     let resources = resources_to_bytes(&resources)?;
 
     let fmt = doc.pixel_format();
@@ -218,8 +227,8 @@ pub(crate) fn export_layered(doc: &Document, opts: &ExportOptions) -> Result<Exp
     let mut img = Image::from_raw(w, h, layout, sample, data)?;
     img.icc = doc.icc_profile.as_ref().map(|i| i.to_vec());
     img.meta = codecs::Metadata {
-        exif: doc.metadata.exif.as_ref().map(|e| e.to_vec()),
-        xmp: doc.metadata.xmp.clone().filter(|_| opts.xmp == crate::XmpEmbed::All),
+        exif: doc.metadata.exif.as_ref().map(|e| e.to_vec()).filter(|_| keep),
+        xmp: doc.metadata.xmp.clone().filter(|_| keep),
         dpi: Some((doc.resolution_dpi, doc.resolution_dpi)),
         photoshop_resources: Some(resources),
         photoshop_layers: Some(layers),

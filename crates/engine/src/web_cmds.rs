@@ -64,12 +64,16 @@ impl WebFormat {
     }
 }
 
-/// Which metadata Save for Web embeds (JPEG only, like Photoshop's legacy exporter).
+/// Which metadata Save for Web embeds (as XMP; Photoshop's legacy exporter writes it to JPEG).
+/// Only `All` carries camera data or a GPS position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WebMetadata {
     None,
     Copyright,
     CopyrightAndContact,
+    /// Every File Info field (title, author, description, keywords, copyright), rebuilt into a
+    /// fresh packet: none of the camera, GPS, location or document-history properties.
+    AllExceptCameraInfo,
     All,
 }
 
@@ -192,8 +196,9 @@ impl WebSettings {
                 "none" => WebMetadata::None,
                 "copyright" => WebMetadata::Copyright,
                 "copyrightAndContact" | "contact" => WebMetadata::CopyrightAndContact,
-                "all" | "allExceptCameraInfo" => WebMetadata::All,
-                m => return Err(bad(cmd, format!("unknown metadata `{m}` (none|copyright|copyrightAndContact|all)"))),
+                "allExceptCameraInfo" => WebMetadata::AllExceptCameraInfo,
+                "all" => WebMetadata::All,
+                m => return Err(bad(cmd, format!("unknown metadata `{m}` (none|copyright|copyrightAndContact|allExceptCameraInfo|all)"))),
             };
         }
         Ok(st)
@@ -230,6 +235,7 @@ impl WebSettings {
             WebMetadata::None => "none",
             WebMetadata::Copyright => "copyright",
             WebMetadata::CopyrightAndContact => "copyrightAndContact",
+            WebMetadata::AllExceptCameraInfo => "allExceptCameraInfo",
             WebMetadata::All => "all",
         };
         let matte = self.matte.map_or("none".to_string(), |c| format!("#{:02x}{:02x}{:02x}", to8(c[0]), to8(c[1]), to8(c[2])));
@@ -332,26 +338,38 @@ fn to8(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-/// XMP to embed for the metadata choice.
+/// XMP to embed for the metadata choice. Every choice short of `All` rebuilds a fresh packet from
+/// the File Info fields it names, so no camera, GPS, location or document-history property of
+/// the document's packet comes along.
 pub fn web_xmp(doc: &Document, m: WebMetadata) -> Option<String> {
+    const COPYRIGHT: [&str; 3] = ["copyright", "copyrightStatus", "copyrightUrl"];
+    const CONTACT: [&str; 2] = ["author", "authorTitle"];
+    const DESCRIPTION: [&str; 3] = ["title", "description", "keywords"];
     let xmp = doc.metadata.xmp.as_deref()?;
-    match m {
-        WebMetadata::None => None,
-        WebMetadata::All => Some(xmp.to_string()),
-        WebMetadata::Copyright | WebMetadata::CopyrightAndContact => {
-            let info = crate::file_cmds::read_file_info(Some(xmp));
-            let mut keep = serde_json::Map::new();
-            let mut keys = vec!["copyright", "copyrightStatus", "copyrightUrl"];
-            if m == WebMetadata::CopyrightAndContact {
-                keys.extend(["author", "authorTitle"]);
-            }
-            for k in keys {
-                if let Some(v) = info.get(k).filter(|v| v.as_str().is_some_and(|s| !s.is_empty()) || v.is_array()) {
-                    keep.insert(k.into(), v.clone());
-                }
-            }
-            (!keep.is_empty()).then(|| crate::file_cmds::write_file_info(None, &Value::Object(keep)))
+    let keys: Vec<&str> = match m {
+        WebMetadata::None => return None,
+        WebMetadata::All => return Some(xmp.to_string()),
+        WebMetadata::Copyright => COPYRIGHT.to_vec(),
+        WebMetadata::CopyrightAndContact => COPYRIGHT.iter().chain(&CONTACT).copied().collect(),
+        WebMetadata::AllExceptCameraInfo => COPYRIGHT.iter().chain(&CONTACT).chain(&DESCRIPTION).copied().collect(),
+    };
+    let info = crate::file_cmds::read_file_info(Some(xmp));
+    let mut keep = serde_json::Map::new();
+    for k in keys {
+        if let Some(v) = info.get(k).filter(|v| v.as_str().is_some_and(|s| !s.is_empty()) || v.as_array().is_some_and(|a| !a.is_empty())) {
+            keep.insert(k.into(), v.clone());
         }
+    }
+    (!keep.is_empty()).then(|| crate::file_cmds::write_file_info(None, &Value::Object(keep)))
+}
+
+/// `out`'s metadata reduced to what `m` embeds, taken from `src` (the document as the user sees
+/// it): [`web_xmp`]'s packet, and the EXIF block (camera data, GPS) only for `All`. For exports
+/// that go through the regular exporter, which embeds whatever the document holds.
+fn keep_web_metadata(out: &mut Document, src: &Document, m: WebMetadata) {
+    out.metadata.xmp = web_xmp(src, m);
+    if m != WebMetadata::All {
+        out.metadata.exif = None;
     }
 }
 
@@ -897,8 +915,12 @@ fn quick_export(s: &mut Session, p: &Value) -> Result<Value> {
             o.insert("format".into(), json!("gif"));
         }
         "webp" => {
-            // WebP has no legacy Save for Web optimiser: write it through the regular exporter.
-            let (wdoc, _, _) = web_document(&doc, &json!({}), &WebSettings { convert_to_srgb: prefs.convert_to_srgb, ..Default::default() })?;
+            // WebP has no legacy Save for Web optimiser: write it through the regular exporter,
+            // with only the metadata Export Preferences › Metadata names, as the other formats
+            // are written (the camera EXIF and its GPS position only with All).
+            let metadata = WebSettings::from_params(&Value::Object(o.clone()), cmd)?.metadata;
+            let (mut wdoc, _, _) = web_document(&doc, &json!({}), &WebSettings { convert_to_srgb: prefs.convert_to_srgb, ..Default::default() })?;
+            keep_web_metadata(&mut wdoc, &doc, metadata);
             let warnings = crate::file_cmds::save_doc(&wdoc, &path, None)?;
             crate::automate_cmds::fire_event(s, "export");
             return Ok(json!({"path": path, "format": fmt, "warnings": warnings}));
@@ -1202,7 +1224,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save for Web (Legacy)…",
             &["File", "Export"],
             Some("Cmd+Alt+Shift+S"),
-            r##"{"preset":"GIF 128 Dithered|JPEG High|PNG-24|…"?,"format":"gif|png8|png24|jpeg|wbmp"="png24","palette":"perceptual|selective|adaptive|restrictive|exact|systemMac|systemWindows|uniform"="selective","colors":2..256=256,"dither":"none|diffusion|pattern|noise"="diffusion","ditherAmount":0..100=88,"transparency":bool=true,"matte":"#rrggbb|none"="#ffffff","interlaced":bool=false,"webSnap":0..100=0,"quality":0..100=60,"progressive":bool=false,"optimized":bool=true,"embedIcc":bool=false,"metadata":"none|copyright|copyrightAndContact|all"="copyright","convertToSrgb":bool=true,"width"|"height"|"percent"? (image size),"resample":"bicubic|bilinear|nearest"?,"path":file? (whole image),"dir":folder? (one file per slice in images/),"html":bool=false,"slices":"all|user"="all","numbers":[n]?} → no path/dir: {bytes,width,height,colors} estimate; else {files, html, bytes}"##,
+            r##"{"preset":"GIF 128 Dithered|JPEG High|PNG-24|…"?,"format":"gif|png8|png24|jpeg|wbmp"="png24","palette":"perceptual|selective|adaptive|restrictive|exact|systemMac|systemWindows|uniform"="selective","colors":2..256=256,"dither":"none|diffusion|pattern|noise"="diffusion","ditherAmount":0..100=88,"transparency":bool=true,"matte":"#rrggbb|none"="#ffffff","interlaced":bool=false,"webSnap":0..100=0,"quality":0..100=60,"progressive":bool=false,"optimized":bool=true,"embedIcc":bool=false,"metadata":"none|copyright|copyrightAndContact|allExceptCameraInfo|all"="copyright","convertToSrgb":bool=true,"width"|"height"|"percent"? (image size),"resample":"bicubic|bilinear|nearest"?,"path":file? (whole image),"dir":folder? (one file per slice in images/),"html":bool=false,"slices":"all|user"="all","numbers":[n]?} → no path/dir: {bytes,width,height,colors} estimate; else {files, html, bytes}"##,
             has_doc,
             save_for_web
         ),

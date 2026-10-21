@@ -209,13 +209,13 @@ fn target(s: &Session, cmd: &str, p: &Value) -> Result<(LayerId, Rect)> {
 }
 
 fn apply(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
+    let interp = crate::image_cmds::interp_param(p, cmd, "bicubic")?;
     let (id, rect) = target(s, cmd, p)?;
     let w = warp_from_params(cmd, p, rect_f(rect))?;
     let is_smart = matches!(s.active().and_then(|d| d.doc.layer(id)).map(|l| &l.content), Some(LayerContent::Smart(_)));
     if w.is_identity() && !is_smart {
         return Ok(json!({"layer": id.0, "changed": false}));
     }
-    let interp = Interp::parse(p.get("interpolation").and_then(Value::as_str).unwrap_or("bicubic"));
     s.edit("Warp", |doc, _| {
         let sel = doc.selection.clone();
         let is_group = doc.layer(id).is_some_and(Layer::is_group);

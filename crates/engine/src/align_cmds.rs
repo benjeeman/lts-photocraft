@@ -42,6 +42,7 @@ fn two_layers(s: &Session) -> std::result::Result<(), String> {
 
 fn auto_align(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "edit.autoAlignLayers";
+    let interp = crate::image_cmds::interp_param(p, cmd, "bicubic")?;
     let ids = selected_pixel_layers(s);
     if ids.len() < 2 {
         return Err(bad(cmd, "select two or more pixel layers"));
@@ -64,7 +65,6 @@ fn auto_align(s: &mut Session, p: &Value) -> Result<Value> {
     let geometric = p.get("geometricCorrection").and_then(Value::as_bool).unwrap_or(false);
     let al = register(&images, layout, Some(ref_idx), geometric, focal35)
         .ok_or_else(|| EngineError::Other("Auto-Align couldn't find enough matching detail between the layers".into()))?;
-    let interp = Interp::parse(p.get("interpolation").and_then(Value::as_str).unwrap_or("bicubic"));
     let planar = matches!(al.layout, Layout::Perspective | Layout::Collage | Layout::Reposition);
     let mut inliers = vec![0usize; ids.len()];
     for &(a, b, n) in &al.pairs {

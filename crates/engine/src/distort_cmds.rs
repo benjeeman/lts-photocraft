@@ -328,24 +328,24 @@ fn deform_selected(surf: &Surface, sel: Option<&Surface>, f: &dyn Fn(&Surface) -
 }
 
 fn puppet(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
+    let it = crate::image_cmds::interp_param(p, cmd, "bicubic")?;
     let w = puppet_params(cmd, p)?;
     let id = target(s, p)?;
     let smart = matches!(s.active().and_then(|d| d.doc.layer(id)).map(|l| &l.content), Some(LayerContent::Smart(_)));
     if w.is_identity() && !smart {
         return Ok(json!({"layer": id.0, "changed": false}));
     }
-    let it = interp(p);
     run_on_layer(s, cmd, "Puppet Warp", p, true, &|surf, sel, _| deform_selected(surf, sel, &|x| puppet_surface(x, &w, it)), None)
 }
 
 fn perspective(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
+    let it = crate::image_cmds::interp_param(p, cmd, "bicubic")?;
     let planes = perspective_params(cmd, p)?;
     let id = target(s, p)?;
     let smart = matches!(s.active().and_then(|d| d.doc.layer(id)).map(|l| &l.content), Some(LayerContent::Smart(_)));
     if PerspectiveMap::is_identity(&planes) && !smart {
         return Ok(json!({"layer": id.0, "changed": false, "planes": planes}));
     }
-    let it = interp(p);
     let map = PerspectiveMap::new(&planes);
     let mask_fn = |m: &Surface| match &map {
         Some(map) => warp_mesh_gray(m, &|x, y| map.map(x, y), Interp::Bilinear),

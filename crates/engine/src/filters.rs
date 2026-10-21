@@ -232,7 +232,15 @@ pub(crate) fn run_filter(s: &mut Session, id: &str, p: &Value) -> Result<Value> 
                 *surf = filter(surf, &fp, area, bounds, selection.as_ref(), doc_bounds.union(&content))?;
                 return Ok(fp.clone());
             }
+            // Lock Image Pixels and Lock All refuse a filter on a pixel layer, as they refuse
+            // painting; Lock Transparent Pixels keeps every pixel's alpha (a Background, opaque by
+            // its own rules, is left as it was).
+            let locks = doc.effective_locks(layer);
             let l = doc.layer_mut(layer).ok_or(EngineError::NoLayer(layer))?;
+            if matches!(l.content, LayerContent::Raster(_)) && (locks.pixels || locks.all) {
+                return Err(EngineError::Other(format!("Could not complete your request because the layer \"{}\" is locked", l.name)));
+            }
+            let lock_alpha = locks.transparency && !crate::extra_cmds::is_background(l);
             let mut fp = fp.clone();
             crate::filters_ext::resolve_in_layer(&mut fp, l, bounds);
             let surf = match &mut l.content {
@@ -247,11 +255,48 @@ pub(crate) fn run_filter(s: &mut Session, id: &str, p: &Value) -> Result<Value> 
             };
             let content = surf.content_bounds();
             let area = algo::output_area(&fp, content, bounds, sel_bounds);
-            *surf = filter(surf, &fp, area, bounds, selection.as_ref(), doc_bounds.union(&content))?;
+            let out = filter(surf, &fp, area, bounds, selection.as_ref(), doc_bounds.union(&content))?;
+            *surf = if lock_alpha { with_alpha_of(surf, out) } else { out };
             Ok(fp)
         },
         move |fp| json!({ "layer": layer_id, "filter": serde_json::to_value(&fp).unwrap_or(Value::Null) }),
     )
+}
+
+/// `new` with the alpha of `old` at every pixel (Lock Transparent Pixels): the filter changes the
+/// colours only, never spreading into the layer's transparency or eating into its edges, and the
+/// pixels transparent in `old` stay as they were. Tile by tile, so a big layer needs no more
+/// memory than the filter did.
+fn with_alpha_of(old: &photocraft_raster::Surface, mut new: photocraft_raster::Surface) -> photocraft_raster::Surface {
+    let fmt = new.format();
+    let n = fmt.channels();
+    if !fmt.alpha || n == 0 || old.format() != fmt {
+        return new;
+    }
+    let area = old.content_bounds().union(&new.content_bounds());
+    for tc in area.tiles() {
+        let r = tc.rect().intersect(&area);
+        let before = old.read_region(r);
+        let mut after = new.read_region(r);
+        let mut changed = false;
+        for (o, a) in before.chunks_exact(n).zip(after.chunks_exact_mut(n)) {
+            let alpha = o.last().copied().unwrap_or(0.0);
+            if alpha <= 0.0 {
+                if *a != *o {
+                    a.copy_from_slice(o);
+                    changed = true;
+                }
+            } else if let Some(cur) = a.last_mut().filter(|cur| **cur != alpha) {
+                *cur = alpha;
+                changed = true;
+            }
+        }
+        if changed {
+            new.write_region(r, &after);
+        }
+    }
+    new.prune();
+    new
 }
 
 macro_rules! filter_cmd {

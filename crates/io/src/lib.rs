@@ -98,17 +98,27 @@ pub struct ExportResult {
     pub warnings: Vec<String>,
 }
 
-/// Which part of the document's XMP packet a flat export embeds. Layered saves (PSD, PSB,
-/// `.pcraft`) always keep everything. Save As and conversions keep the whole packet, as
-/// Photoshop's Save As does; Export As starts at `None`, because the packet lists the text of
-/// every type layer and one id per placed document (#647).
+/// Which of the document's metadata an export embeds besides the pixels, the colour profile and
+/// the resolution (those are image data and always travel). Layered saves (PSD, PSB, `.pcraft`)
+/// always keep everything. Save As and conversions keep all of it, as Photoshop's Save As does;
+/// Export As starts at `None`, because the XMP packet lists the text of every type layer and one
+/// id per placed document (#647), and a camera's EXIF carries its make, model, serial number,
+/// capture time and GPS position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum XmpEmbed {
-    /// Embed the document's whole XMP packet.
+    /// Embed the document's whole XMP packet, its EXIF block and (layered TIFF) its IPTC record.
     #[default]
     All,
-    /// Embed no XMP.
+    /// Embed none of them: no XMP, no EXIF (no camera data, GPS or capture time) and no IPTC. The
+    /// pixels are stored upright, so the file still opens the right way up.
     None,
+}
+
+impl XmpEmbed {
+    /// Whether the export may embed the document's metadata (XMP, EXIF, IPTC).
+    pub fn keeps_metadata(self) -> bool {
+        self == XmpEmbed::All
+    }
 }
 
 /// Export options.
@@ -123,8 +133,9 @@ pub struct ExportOptions {
     /// Save As sets it from its Layers option, which keeps them as Photoshop does. `false` is
     /// Photoshop's "Discard Layers and Save a Copy".
     pub tiff_layers: bool,
-    /// Which part of the document's XMP packet a flat export embeds (PSD/PSB/`.pcraft`
-    /// always keep everything). Everything by default, as Save As does; Export As offers None.
+    /// Which of the document's metadata (XMP, EXIF, IPTC) a flat or layered-TIFF export embeds
+    /// (PSD/PSB/`.pcraft` always keep everything). Everything by default, as Save As does;
+    /// Export As offers None.
     pub xmp: XmpEmbed,
 }
 

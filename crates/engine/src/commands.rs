@@ -183,12 +183,19 @@ fn new_adjustment(s: &mut Session, adj: Adjustment) -> Result<Value> {
     let label = format!("New {} Layer", adj.label());
     let name = adj.label().to_string();
     let id = s.edit(&label, |doc, active| {
-        let l = Layer::new(doc.next_layer_name(&name), LayerContent::Adjustment(adj));
+        let mut l = Layer::new(doc.next_layer_name(&name), LayerContent::Adjustment(adj));
+        l.mask = selection_mask(doc);
         let id = doc.insert_above(*active, l);
         *active = Some(id);
         Ok(id)
     })?;
     Ok(json!({ "layer": id.0 }))
+}
+
+/// The mask of a new adjustment or fill layer: the active selection, as in Photoshop (the layer
+/// applies inside the marching ants only); none without a selection.
+fn selection_mask(doc: &Document) -> Option<LayerMask> {
+    doc.selection.clone().map(|surface| LayerMask { surface, ..LayerMask::reveal_all() })
 }
 
 fn destructive_adjust(s: &mut Session, label: &str, adj: Adjustment, p: &Value) -> Result<Value> {
@@ -218,8 +225,8 @@ fn destructive_adjust(s: &mut Session, label: &str, adj: Adjustment, p: &Value) 
     s.edit(label, |doc, _| {
         let sel = doc.selection.clone();
         let mode = doc.mode;
-        let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
-        let surf = l.surface_mut().ok_or_else(|| EngineError::Other("not a pixel layer".into()))?;
+        // Lock Image Pixels and Lock All refuse it, as they refuse painting and filters.
+        let surf = paint_surface(doc, id, &Value::Null)?;
         pixels::adjust_surface(surf, &adj, sel.as_ref(), mode);
         Ok(())
     })?;
@@ -639,7 +646,8 @@ fn build() -> Vec<CommandSpec> {
         cmd!("layer.newFillLayer.solidColor", "Solid Color…", ["Layer", "New Fill Layer"], None, r##"{"color":"#rrggbb"=foreground}"##, has_doc, |s, p| {
             let c = color_param(p, "color", s.tools.foreground);
             let id = s.edit("New Color Fill Layer", |doc, active| {
-                let l = Layer::new(doc.next_layer_name("Color Fill"), LayerContent::Fill(Fill::Solid(Color::rgba(c[0], c[1], c[2], c[3]))));
+                let mut l = Layer::new(doc.next_layer_name("Color Fill"), LayerContent::Fill(Fill::Solid(Color::rgba(c[0], c[1], c[2], c[3]))));
+                l.mask = selection_mask(doc);
                 let id = doc.insert_above(*active, l);
                 *active = Some(id);
                 Ok(id)
@@ -667,7 +675,9 @@ fn build() -> Vec<CommandSpec> {
                         style,
                         reverse,
                     );
-                    let id = doc.insert_above(*active, Layer::new(doc.next_layer_name("Gradient Fill"), LayerContent::Fill(fill)));
+                    let mut l = Layer::new(doc.next_layer_name("Gradient Fill"), LayerContent::Fill(fill));
+                    l.mask = selection_mask(doc);
+                    let id = doc.insert_above(*active, l);
                     *active = Some(id);
                     Ok(id)
                 })?;

@@ -326,6 +326,7 @@ fn quad_param(p: &Value) -> Option<[[f64; 2]; 4]> {
 }
 
 fn transform(s: &mut Session, p: &Value) -> Result<Value> {
+    let interp = crate::image_cmds::interp_param(p, "edit.transform", "bicubic")?;
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let id = match p.get("layer").and_then(Value::as_u64) {
         Some(v) => Some(LayerId(v)),
@@ -372,7 +373,6 @@ fn transform(s: &mut Session, p: &Value) -> Result<Value> {
     let m = h.0;
     let affine =
         (m[6].abs() < 1e-12 && m[7].abs() < 1e-12).then(|| Affine { m: [m[0] / m[8], m[3] / m[8], m[1] / m[8], m[4] / m[8], m[2] / m[8], m[5] / m[8]] });
-    let interp = Interp::parse(p.get("interpolation").and_then(Value::as_str).unwrap_or("bicubic"));
     let lone = lone.is_some();
     s.edit("Free Transform", |doc, _| {
         let sel = doc.selection.clone();
